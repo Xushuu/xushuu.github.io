@@ -1,7 +1,7 @@
 /* =====================================================
    APP.JS — Agendamentos (Sala de Reunião & Motorista)
    =====================================================
-   Firebase Realtime Database • Real-time sync
+   Firebase Realtime Database + Google Auth
    ===================================================== */
 
 // ───── Firebase SDK Imports ─────
@@ -11,9 +11,15 @@ import {
   ref,
   push,
   set,
-  remove,
   onValue
 } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-database.js';
+import {
+  getAuth,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  GoogleAuthProvider
+} from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js';
 
 // ───── Firebase Config ─────
 const firebaseConfig = {
@@ -30,6 +36,8 @@ const firebaseConfig = {
 // ───── Initialize Firebase ─────
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
+const auth = getAuth(app);
+const googleProvider = new GoogleAuthProvider();
 const bookingsRef = ref(db, 'bookings');
 
 // ───── Constants ─────
@@ -56,9 +64,10 @@ const MONTH_NAMES = [
 // ───── State ─────
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth();
-let selectedDate = null; // 'YYYY-MM-DD'
-let bookings = []; // synced from Firebase in real-time
+let selectedDate = null;
+let bookings = [];
 let editingBookingId = null;
+let currentUser = null; // Firebase Auth user
 
 // ───── DOM References ─────
 const $calendarGrid = document.getElementById('calendar-grid');
@@ -91,13 +100,59 @@ const $detailOverlay = document.getElementById('detail-overlay');
 const $detailBody = document.getElementById('detail-body');
 const $btnCloseDetail = document.getElementById('btn-close-detail');
 const $btnCloseDetailBottom = document.getElementById('btn-close-detail-bottom');
-const $btnDeleteBooking = document.getElementById('btn-delete-booking');
+const $btnEditBooking = document.getElementById('btn-edit-booking');
+
+// Auth
+const $btnGoogleLogin = document.getElementById('btn-google-login');
+const $userInfo = document.getElementById('user-info');
+const $userAvatar = document.getElementById('user-avatar');
+const $userName = document.getElementById('user-name');
+const $btnLogout = document.getElementById('btn-logout');
 
 // Toast
 const $toast = document.getElementById('toast');
 
+// ───── Auth — Google Login ─────
+async function loginWithGoogle() {
+  try {
+    await signInWithPopup(auth, googleProvider);
+  } catch (error) {
+    console.error('Login error:', error);
+    if (error.code !== 'auth/popup-closed-by-user') {
+      showToast('Erro ao fazer login com Google', true);
+    }
+  }
+}
+
+async function logout() {
+  try {
+    await signOut(auth);
+  } catch (error) {
+    console.error('Logout error:', error);
+  }
+}
+
+// Listen to auth state changes
+onAuthStateChanged(auth, (user) => {
+  currentUser = user;
+  updateAuthUI();
+  // Re-render agenda so edit buttons update based on ownership
+  renderAgenda();
+});
+
+function updateAuthUI() {
+  if (currentUser) {
+    $btnGoogleLogin.style.display = 'none';
+    $userInfo.style.display = 'flex';
+    $userAvatar.src = currentUser.photoURL || '';
+    $userName.textContent = currentUser.displayName || currentUser.email;
+  } else {
+    $btnGoogleLogin.style.display = 'inline-flex';
+    $userInfo.style.display = 'none';
+  }
+}
+
 // ───── Firebase Real-time Listener ─────
-// This listener fires once on load and again whenever data changes
 onValue(bookingsRef, (snapshot) => {
   bookings = [];
   if (snapshot.exists()) {
@@ -105,7 +160,6 @@ onValue(bookingsRef, (snapshot) => {
       bookings.push({ id: child.key, ...child.val() });
     });
   }
-  // Re-render everything with fresh data
   renderCalendar();
   renderAgenda();
 }, (error) => {
@@ -134,18 +188,6 @@ async function updateBooking(id, data) {
   } catch (error) {
     console.error('Firebase update error:', error);
     showToast('Erro ao atualizar agendamento', true);
-    return false;
-  }
-}
-
-async function deleteBookingFromDB(id) {
-  try {
-    const bookingRef = ref(db, `bookings/${id}`);
-    await remove(bookingRef);
-    return true;
-  } catch (error) {
-    console.error('Firebase delete error:', error);
-    showToast('Erro ao excluir agendamento', true);
     return false;
   }
 }
@@ -181,6 +223,11 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+/** Check if the current logged-in user owns a booking */
+function isOwner(booking) {
+  return currentUser && booking.uid === currentUser.uid;
+}
+
 // ───── Calendar Rendering ─────
 function renderCalendar() {
   $monthLabel.textContent = `${MONTH_NAMES[currentMonth]} ${currentYear}`;
@@ -194,26 +241,20 @@ function renderCalendar() {
 
   $calendarGrid.innerHTML = '';
 
-  // Previous month filler days
   for (let i = firstDay - 1; i >= 0; i--) {
     const day = prevMonthDays - i;
-    const el = createDayElement(day, true);
-    $calendarGrid.appendChild(el);
+    $calendarGrid.appendChild(createDayElement(day, true));
   }
 
-  // Current month days
   for (let d = 1; d <= daysInMonth; d++) {
     const dk = dateKey(currentYear, currentMonth, d);
-    const el = createDayElement(d, false, dk, dk === todayStr, dk === selectedDate);
-    $calendarGrid.appendChild(el);
+    $calendarGrid.appendChild(createDayElement(d, false, dk, dk === todayStr, dk === selectedDate));
   }
 
-  // Next month filler days
   const totalCells = $calendarGrid.children.length;
   const remaining = (7 - (totalCells % 7)) % 7;
   for (let i = 1; i <= remaining; i++) {
-    const el = createDayElement(i, true);
-    $calendarGrid.appendChild(el);
+    $calendarGrid.appendChild(createDayElement(i, true));
   }
 }
 
@@ -229,21 +270,17 @@ function createDayElement(day, isOtherMonth, dk = null, isToday = false, isSelec
     if (isToday) el.classList.add('today');
     if (isSelected) el.classList.add('calendar-day--selected');
 
-    // Booking indicators
     const dayBookings = getBookingsForDate(dk);
     if (dayBookings.length > 0) {
       const indicators = document.createElement('div');
       indicators.className = 'day-indicators';
 
-      const hasReuniao = dayBookings.some(b => b.type === 'reuniao');
-      const hasMotorista = dayBookings.some(b => b.type === 'motorista');
-
-      if (hasReuniao) {
+      if (dayBookings.some(b => b.type === 'reuniao')) {
         const dot = document.createElement('span');
         dot.className = 'day-indicator reuniao';
         indicators.appendChild(dot);
       }
-      if (hasMotorista) {
+      if (dayBookings.some(b => b.type === 'motorista')) {
         const dot = document.createElement('span');
         dot.className = 'day-indicator motorista';
         indicators.appendChild(dot);
@@ -265,7 +302,7 @@ function selectDate(dk) {
   renderAgenda();
 }
 
-// ───── Agenda (Right Panel) Rendering ─────
+// ───── Agenda (Right Panel) ─────
 function renderAgenda() {
   if (!selectedDate) {
     $agendaDateLabel.textContent = 'Selecione um dia';
@@ -307,7 +344,13 @@ function renderAgenda() {
         <span class="timeslot-content">Horário disponível</span>
         <span class="timeslot-status available">Livre</span>
       `;
-      slot.addEventListener('click', () => openBookingModal(selectedDate, time));
+      slot.addEventListener('click', () => {
+        if (!currentUser) {
+          showToast('Faça login com Google para agendar', true);
+          return;
+        }
+        openBookingModal(selectedDate, time);
+      });
     }
 
     $timeslotsContainer.appendChild(slot);
@@ -316,6 +359,11 @@ function renderAgenda() {
 
 // ───── Booking Modal ─────
 function openBookingModal(date, time, existingBooking = null) {
+  if (!currentUser) {
+    showToast('Faça login com Google para agendar', true);
+    return;
+  }
+
   editingBookingId = existingBooking ? existingBooking.id : null;
 
   $formDate.value = date;
@@ -338,11 +386,13 @@ function openBookingModal(date, time, existingBooking = null) {
     $formDate.value = date;
     $formTime.value = time;
     $formDatetimeDisplay.value = `${weekday}, ${dateBR} — ${time}`;
+    // Auto-fill from Google account
+    $formName.value = currentUser.displayName || '';
+    $formEmail.value = currentUser.email || '';
     $formPeople.value = 1;
     setActivityType('reuniao');
   }
 
-  // Clear validation
   $formName.classList.remove('invalid');
   $formEmail.classList.remove('invalid');
 
@@ -365,7 +415,10 @@ function getSelectedType() {
 }
 
 // ───── Detail Modal ─────
+let currentDetailBooking = null;
+
 function showDetail(booking) {
+  currentDetailBooking = booking;
   editingBookingId = booking.id;
 
   const typeName = booking.type === 'reuniao' ? 'Reunião' : 'Motorista';
@@ -463,17 +516,37 @@ function showDetail(booking) {
     ` : ''}
   `;
 
+  // Show edit button ONLY if the logged-in user is the owner
+  $btnEditBooking.style.display = isOwner(booking) ? 'inline-flex' : 'none';
+
   $detailOverlay.style.display = 'flex';
 }
 
 function closeDetailModal() {
   $detailOverlay.style.display = 'none';
   editingBookingId = null;
+  currentDetailBooking = null;
+}
+
+/** Open the booking form pre-filled with the current detail data for editing */
+function handleEditBooking() {
+  if (!currentDetailBooking || !isOwner(currentDetailBooking)) {
+    showToast('Você só pode editar seus próprios agendamentos', true);
+    return;
+  }
+  const booking = currentDetailBooking;
+  closeDetailModal();
+  openBookingModal(booking.date, booking.time, booking);
 }
 
 // ───── Save Booking ─────
 async function handleFormSubmit(e) {
   e.preventDefault();
+
+  if (!currentUser) {
+    showToast('Faça login para salvar', true);
+    return;
+  }
 
   const name = $formName.value.trim();
   const email = $formEmail.value.trim();
@@ -502,7 +575,7 @@ async function handleFormSubmit(e) {
     return;
   }
 
-  // Check conflict (another booking in same slot)
+  // Check conflict
   const existing = getBookingForSlot(date, time);
   if (existing && existing.id !== editingBookingId) {
     showToast('Este horário já está ocupado!', true);
@@ -517,75 +590,66 @@ async function handleFormSubmit(e) {
     people,
     notes,
     type,
+    uid: currentUser.uid,
     createdAt: new Date().toISOString()
   };
 
   if (editingBookingId) {
-    // Update existing booking in Firebase
+    // Verify ownership before updating
+    const original = bookings.find(b => b.id === editingBookingId);
+    if (original && original.uid !== currentUser.uid) {
+      showToast('Você só pode editar seus próprios agendamentos', true);
+      return;
+    }
     const success = await updateBooking(editingBookingId, bookingData);
     if (success) {
       closeBookingModal();
       showToast('Agendamento atualizado!');
     }
   } else {
-    // Create new booking in Firebase
     const newId = await createBooking(bookingData);
     if (newId) {
       closeBookingModal();
       showToast('Agendamento salvo com sucesso!');
     }
   }
-  // No need to manually re-render — the onValue listener handles it
-}
-
-// ───── Delete Booking ─────
-async function handleDeleteBooking() {
-  if (!editingBookingId) return;
-
-  if (!confirm('Tem certeza que deseja excluir este agendamento?')) return;
-
-  const success = await deleteBookingFromDB(editingBookingId);
-  if (success) {
-    closeDetailModal();
-    showToast('Agendamento excluído');
-  }
-  // No need to manually re-render — the onValue listener handles it
 }
 
 // ───── Toast ─────
 function showToast(message, isError = false) {
   $toast.textContent = message;
   $toast.className = 'toast' + (isError ? ' error' : '');
-
-  // Force reflow for re-animation
   void $toast.offsetWidth;
   $toast.classList.add('show');
-
   setTimeout(() => {
     $toast.classList.remove('show');
   }, 2800);
 }
 
 // ───── Event Listeners ─────
+
+// Auth
+$btnGoogleLogin.addEventListener('click', loginWithGoogle);
+$btnLogout.addEventListener('click', logout);
+
+// Calendar nav
 $btnPrev.addEventListener('click', () => {
   currentMonth--;
-  if (currentMonth < 0) {
-    currentMonth = 11;
-    currentYear--;
-  }
+  if (currentMonth < 0) { currentMonth = 11; currentYear--; }
   renderCalendar();
 });
 
 $btnNext.addEventListener('click', () => {
   currentMonth++;
-  if (currentMonth > 11) {
-    currentMonth = 0;
-    currentYear++;
-  }
+  if (currentMonth > 11) { currentMonth = 0; currentYear++; }
   renderCalendar();
 });
 
 $btnNewBooking.addEventListener('click', () => {
+  if (!currentUser) {
+    showToast('Faça login com Google para agendar', true);
+    return;
+  }
   if (!selectedDate) return;
   const firstAvailable = TIME_SLOTS.find(t => !getBookingForSlot(selectedDate, t));
   if (firstAvailable) {
@@ -599,7 +663,6 @@ $btnNewBooking.addEventListener('click', () => {
 $bookingForm.addEventListener('submit', handleFormSubmit);
 $btnCloseModal.addEventListener('click', closeBookingModal);
 $btnCancelBooking.addEventListener('click', closeBookingModal);
-
 $modalOverlay.addEventListener('click', (e) => {
   if (e.target === $modalOverlay) closeBookingModal();
 });
@@ -611,13 +674,12 @@ $toggleMotorista.addEventListener('click', () => setActivityType('motorista'));
 // Detail modal
 $btnCloseDetail.addEventListener('click', closeDetailModal);
 $btnCloseDetailBottom.addEventListener('click', closeDetailModal);
-$btnDeleteBooking.addEventListener('click', handleDeleteBooking);
-
+$btnEditBooking.addEventListener('click', handleEditBooking);
 $detailOverlay.addEventListener('click', (e) => {
   if (e.target === $detailOverlay) closeDetailModal();
 });
 
-// Keyboard — ESC to close modals
+// Keyboard — ESC
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if ($modalOverlay.style.display !== 'none') closeBookingModal();
@@ -626,12 +688,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ───── Init ─────
-function init() {
-  // Auto-select today
-  const today = new Date();
-  selectedDate = dateKey(today.getFullYear(), today.getMonth(), today.getDate());
-  renderCalendar();
-  renderAgenda();
-}
-
-init();
+const today = new Date();
+selectedDate = dateKey(today.getFullYear(), today.getMonth(), today.getDate());
+renderCalendar();
+renderAgenda();

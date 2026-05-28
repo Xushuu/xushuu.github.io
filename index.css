@@ -219,6 +219,88 @@ body::before {
   box-shadow: 0 0 8px var(--color-motorista-glow);
 }
 
+/* Header Right (legend + auth) */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xl);
+}
+
+/* =====================================================
+   AUTH UI
+   ===================================================== */
+.auth-area {
+  display: flex;
+  align-items: center;
+}
+
+.btn-google {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px 18px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: var(--font-family);
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.btn-google:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--color-border-focus);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  object-fit: cover;
+}
+
+.user-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-logout {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-logout:hover {
+  background: rgba(255, 71, 87, 0.1);
+  border-color: rgba(255, 71, 87, 0.3);
+  color: var(--color-danger);
+}
+
 /* =====================================================
    MAIN LAYOUT
    ===================================================== */
@@ -918,8 +1000,11 @@ input.invalid, textarea.invalid {
     gap: var(--space-sm);
   }
 
-  .legend-area {
-    margin-left: 58px;
+  .header-right {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
   }
 
   .form-row {
@@ -945,7 +1030,11 @@ input.invalid, textarea.invalid {
     padding: var(--space-md);
   }
 
-  .legend-area {
-    margin-left: 0;
+  .user-name {
+    display: none;
+  }
+
+  .header-right {
+    gap: var(--space-xs);
   }
 }
