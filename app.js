@@ -11,6 +11,7 @@ import {
   ref,
   push,
   set,
+  remove,
   onValue
 } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-database.js';
 import {
@@ -101,6 +102,7 @@ const $detailBody = document.getElementById('detail-body');
 const $btnCloseDetail = document.getElementById('btn-close-detail');
 const $btnCloseDetailBottom = document.getElementById('btn-close-detail-bottom');
 const $btnEditBooking = document.getElementById('btn-edit-booking');
+const $btnDeleteBooking = document.getElementById('btn-delete-booking');
 
 // Auth
 const $btnGoogleLogin = document.getElementById('btn-google-login');
@@ -188,6 +190,18 @@ async function updateBooking(id, data) {
   } catch (error) {
     console.error('Firebase update error:', error);
     showToast('Erro ao atualizar agendamento', true);
+    return false;
+  }
+}
+
+async function deleteBookingFromDB(id) {
+  try {
+    const bookingRef = ref(db, `bookings/${id}`);
+    await remove(bookingRef);
+    return true;
+  } catch (error) {
+    console.error('Firebase delete error:', error);
+    showToast('Erro ao excluir agendamento', true);
     return false;
   }
 }
@@ -516,8 +530,10 @@ function showDetail(booking) {
     ` : ''}
   `;
 
-  // Show edit button ONLY if the logged-in user is the owner
-  $btnEditBooking.style.display = isOwner(booking) ? 'inline-flex' : 'none';
+  // Show edit/delete buttons ONLY if the logged-in user is the owner
+  const ownerDisplay = isOwner(booking) ? 'inline-flex' : 'none';
+  $btnEditBooking.style.display = ownerDisplay;
+  $btnDeleteBooking.style.display = ownerDisplay;
 
   $detailOverlay.style.display = 'flex';
 }
@@ -526,6 +542,21 @@ function closeDetailModal() {
   $detailOverlay.style.display = 'none';
   editingBookingId = null;
   currentDetailBooking = null;
+}
+
+/** Delete the current booking after ownership check and confirmation */
+async function handleDeleteBooking() {
+  if (!currentDetailBooking || !isOwner(currentDetailBooking)) {
+    showToast('Você só pode excluir seus próprios agendamentos', true);
+    return;
+  }
+  if (!confirm('Tem certeza que deseja excluir este agendamento?')) return;
+
+  const success = await deleteBookingFromDB(currentDetailBooking.id);
+  if (success) {
+    closeDetailModal();
+    showToast('Agendamento excluído');
+  }
 }
 
 /** Open the booking form pre-filled with the current detail data for editing */
@@ -675,6 +706,7 @@ $toggleMotorista.addEventListener('click', () => setActivityType('motorista'));
 $btnCloseDetail.addEventListener('click', closeDetailModal);
 $btnCloseDetailBottom.addEventListener('click', closeDetailModal);
 $btnEditBooking.addEventListener('click', handleEditBooking);
+$btnDeleteBooking.addEventListener('click', handleDeleteBooking);
 $detailOverlay.addEventListener('click', (e) => {
   if (e.target === $detailOverlay) closeDetailModal();
 });
